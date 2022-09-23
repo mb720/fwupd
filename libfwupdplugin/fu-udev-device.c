@@ -2072,6 +2072,64 @@ fu_udev_device_get_children_with_subsystem(FuUdevDevice *self, const gchar *cons
 	return g_steal_pointer(&out);
 }
 
+/**
+ * fu_udev_device_find_usb_device:
+ * @FuUdevDevice: a #FuUdevDevice
+ * @error: (nullable): optional return location for an error
+ *
+ * Gets the matching #GUsbDevice for the #GUdevDevice.
+ *
+ * Returns: (transfer full): a #GUsbDevice, or NULL if unset or invalid
+ *
+ * Since: 1.8.6
+ **/
+GUsbDevice *
+fu_udev_device_find_usb_device(FuUdevDevice *self, GError **error)
+{
+#if defined(HAVE_GUDEV) && defined(HAVE_GUSB)
+	FuUdevDevicePrivate *priv = GET_PRIVATE(self);
+	guint8 bus = 0;
+	guint8 address = 0;
+	g_autoptr(GUdevDevice) udev_device = g_object_ref(priv->udev_device);
+	g_autoptr(GUsbContext) usb_ctx = NULL;
+
+	g_return_val_if_fail(FU_IS_UDEV_DEVICE(self), NULL);
+	g_return_val_if_fail(error == NULL || *error == NULL, NULL);
+
+	/* look at the current device and all the parent devices until we can find the USB data */
+	while (TRUE) {
+		g_autoptr(GUdevDevice) udev_device_parent = NULL;
+		bus = g_udev_device_get_sysfs_attr_as_int(udev_device, "busnum");
+		address = g_udev_device_get_sysfs_attr_as_int(udev_device, "devnum");
+		if (bus != 0 || address != 0)
+			break;
+		udev_device_parent = g_udev_device_get_parent(udev_device);
+		g_set_object(&udev_device, udev_device_parent);
+	}
+
+	/* nothing found */
+	if (bus == 0x0 && address == 0x0) {
+		g_set_error_literal(error,
+				    FWUPD_ERROR,
+				    FWUPD_ERROR_NOT_SUPPORTED,
+				    "No parent device with busnum and devnum");
+		return NULL;
+	}
+
+	/* match device */
+	usb_ctx = g_usb_context_new(error);
+	if (usb_ctx == NULL)
+		return NULL;
+	return g_usb_context_find_by_bus_address(usb_ctx, bus, address, error);
+#else
+	g_set_error_literal(error,
+			    FWUPD_ERROR,
+			    FWUPD_ERROR_NOT_SUPPORTED,
+			    "Not supported as <gudev.h> or <gusb.h> is unavailable");
+	return NULL;
+#endif
+}
+
 static void
 fu_udev_device_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
