@@ -24,6 +24,7 @@
 #include "fu-context-private.h"
 #include "fu-device-list.h"
 #include "fu-device-private.h"
+#include "fu-engine-integrity.h"
 #include "fu-engine.h"
 #include "fu-history.h"
 #include "fu-plugin-list.h"
@@ -4604,6 +4605,61 @@ fu_common_store_cab_error_wrong_checksum_func(void)
 	g_assert_null(silo);
 }
 
+static gboolean
+fu_engine_integrity_compare_helper(const gchar *str1, const gchar *str2, GError **error)
+{
+	g_autoptr(GHashTable) int1 = fu_engine_integrity_new();
+	g_autoptr(GHashTable) int2 = fu_engine_integrity_new();
+
+	if (!fu_engine_integrity_from_string(int1, str1, error))
+		return FALSE;
+	if (!fu_engine_integrity_from_string(int2, str2, error))
+		return FALSE;
+	return fu_engine_integrity_compare(int1, int2, error);
+}
+
+static void
+fu_engine_integrity_func(gconstpointer user_data)
+{
+	gboolean ret;
+	g_autoptr(GError) error = NULL;
+
+	/* exact same */
+	ret = fu_engine_integrity_compare_helper("UEFI:Foo=Bar\nUEFI:Baz=Bam",
+						 "UEFI:Foo=Bar\nUEFI:Baz=Bam",
+						 &error);
+	g_assert_no_error(error);
+	g_assert_true(ret);
+
+	/* same contents, different order */
+	ret = fu_engine_integrity_compare_helper("UEFI:Foo=Bar\nUEFI:Baz=Bam",
+						 "UEFI:Baz=Bam\nUEFI:Foo=Bar",
+						 &error);
+	g_assert_no_error(error);
+	g_assert_true(ret);
+
+	/* one less key on current system */
+	ret = fu_engine_integrity_compare_helper("UEFI:Foo=Bar",
+						 "UEFI:Baz=Bam\nUEFI:Foo=Bar",
+						 &error);
+	g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_assert_false(ret);
+	g_clear_error(&error);
+
+	/* one more key on current system */
+	ret = fu_engine_integrity_compare_helper("UEFI:Baz=Bam\nUEFI:Foo=Bar",
+						 "UEFI:Foo=Bar",
+						 &error);
+	g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_assert_false(ret);
+	g_clear_error(&error);
+
+	/* totally different data */
+	ret = fu_engine_integrity_compare_helper("UEFI:Baz=Bam", "UEFI:Foo=Bar", &error);
+	g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_assert_false(ret);
+}
+
 static void
 fu_engine_modify_bios_settings_func(void)
 {
@@ -4827,6 +4883,7 @@ main(int argc, char **argv)
 			     fu_device_list_remove_chain_func);
 	g_test_add_data_func("/fwupd/release{compare}", self, fu_release_compare_func);
 	g_test_add_func("/fwupd/release{uri-scheme}", fu_release_uri_scheme_func);
+	g_test_add_data_func("/fwupd/engine-integrity", self, fu_engine_integrity_func);
 	g_test_add_data_func("/fwupd/engine{get-details-added}",
 			     self,
 			     fu_engine_get_details_added_func);

@@ -41,6 +41,7 @@ fwupd_engine_src = [
   'fu-device-list.c',
   'fu-engine.c',
   'fu-engine-helper.c',
+  'fu-engine-integrity.c',
   'fu-engine-request.c',
   'fu-history.c',
   'fu-idle.c',

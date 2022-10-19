@@ -46,6 +46,7 @@
 #include "fu-device-list.h"
 #include "fu-device-private.h"
 #include "fu-engine-helper.h"
+#include "fu-engine-integrity.h"
 #include "fu-engine-request.h"
 #include "fu-engine.h"
 #include "fu-history.h"
@@ -2424,6 +2425,20 @@ fu_engine_add_release_metadata(FuEngine *self, FuRelease *release, FuPlugin *plu
 			}
 		}
 	}
+
+	/* ensure system state stays the same */
+	if (fu_plugin_has_flag(plugin, FWUPD_PLUGIN_FLAG_VERIFY_SYSTEM_INTEGRITY)) {
+		g_autofree gchar *str = NULL;
+		g_autoptr(GHashTable) integrity = fu_engine_integrity_new();
+		fu_engine_integrity_measure(integrity, NULL);
+		str = fu_engine_integrity_to_string(integrity);
+		if (str != NULL) {
+			fwupd_release_add_metadata_item(FWUPD_RELEASE(release),
+							"SystemIntegrity",
+							str);
+		}
+	}
+
 	return TRUE;
 }
 
@@ -7289,9 +7304,30 @@ fu_engine_update_history_device(FuEngine *self, FuDevice *dev_history, GError **
 			       fwupd_release_get_version(rel_history),
 			       fu_device_get_version_format(dev)) == 0) {
 		GPtrArray *checksums;
+		const gchar *integrity_str;
+
 		g_debug("installed version %s matching history %s",
 			fu_device_get_version(dev),
 			fwupd_release_get_version(rel_history));
+
+		/* check nothing changed */
+		integrity_str = fwupd_release_get_metadata_item(rel_history, "SystemIntegrity");
+		if (integrity_str != NULL) {
+			g_autoptr(GHashTable) integrity_old = fu_engine_integrity_new();
+			g_autoptr(GHashTable) integrity_now = fu_engine_integrity_new();
+			g_autoptr(GError) error_local = NULL;
+
+			fu_engine_integrity_from_string(integrity_old, integrity_str, NULL);
+			fu_engine_integrity_measure(integrity_now, NULL);
+			if (!fu_engine_integrity_compare(integrity_now,
+							 integrity_old,
+							 &error_local)) {
+				fu_device_set_update_state(dev_history, FWUPD_UPDATE_STATE_FAILED);
+				fu_device_set_update_error(dev_history, error_local->message);
+				return fu_history_modify_device(self->history, dev_history, error);
+			}
+			g_debug("system integrity valid using:\n%s", integrity_str);
+		}
 
 		/* copy over runtime checksums if set from probe() */
 		checksums = fu_device_get_checksums(dev);
